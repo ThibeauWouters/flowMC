@@ -9,7 +9,9 @@ from flowMC.nfmodel.utils import *
 from flowMC.sampler.MALA import MALA
 from flowMC.sampler.Sampler import Sampler
 from flowMC.utils.PRNG_keys import initialize_rng_keys
+from flowMC.utils.diagnosis import Diagnosis
 
+import pickle
 
 def target_dualmoon(x, data):
     """
@@ -123,3 +125,14 @@ figure = corner.corner(nf_samples, labels=["$x_1$", "$x_2$", "$x_3$", "$x_4$", "
 figure.set_size_inches(7, 7)
 figure.suptitle("Visualize NF samples")
 plt.show()
+
+print("Saving summary object with pickle")
+with open('outdir/summary.pickle', 'wb') as handle:
+    pickle.dump(summary, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+diagnosis = Diagnosis(nf_sampler)
+result = diagnosis.gelman_rubin()
+
+print(result)
+
+diagnosis.plot_summary(which="training")
