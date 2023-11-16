@@ -35,6 +35,8 @@ class MMALA(ProposalBase):
         G_inv = np.linalg.inv(G_numpy)
         self.G_inv = jnp.asarray(G_inv) 
         G_inv_sqrt = sqrtm(G_inv) 
+        # TODO implement some clipping?
+        # self.G_inv_sqrt = jnp.clip(G_inv_sqrt, 0, 1e-2)
         self.G_inv_sqrt = jnp.asarray(G_inv_sqrt)
         check = np.allclose(jnp.matmul(self.G_inv_sqrt, self.G_inv_sqrt), self.G_inv)
         print(f"Check of matrix square root is OK: {check}")
