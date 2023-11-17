@@ -39,8 +39,9 @@ class Diagnosis:
         if naming is None:
             naming = [f"x{i}" for i in range(sampler.n_dim)]
         self.naming = naming
-        self.train_summary = sampler.get_sampler_state(training=True)
-        self.production_summary = sampler.get_sampler_state(training=False)
+        self.pretrain_summary = sampler.get_sampler_state("pretraining")
+        self.train_summary = sampler.get_sampler_state("training")
+        self.production_summary = sampler.get_sampler_state("production")
         
         print("self.train_summary.keys()")
         print(self.train_summary.keys())
@@ -80,10 +81,12 @@ class Diagnosis:
     
     def plot_summary(self, which: str = "training", **plotkwargs):
         
-        # TODO add a plot of the Gelman-Rubin statistic
+        # TODO add a plot of the Gelman-Rubin statistic, but for that, have to save the values somewhere
         
         # Choose the dataset
         if which == "training":
+            data = self.train_summary
+        elif which == "pretraining":
             data = self.train_summary
         else:
             data = self.production_summary
@@ -104,8 +107,8 @@ class Diagnosis:
         plt.plot(x, mean, linestyle="-", color="blue", alpha=alpha)
         plt.plot(x, self._rolling_average(mean), linestyle="-", color="blue")
         plt.xlabel("Iteration")
-        plt.xscale('log')
-        plt.ylabel(f"Local acceptance (f{which})")
+        # plt.xscale('log')
+        plt.ylabel(f"Local acceptance ({which})")
         plt.ylim(0-eps, 1+eps)
         plt.savefig(self.outdir_name + f"local_accs_{which}.png", bbox_inches='tight')
         
@@ -116,8 +119,8 @@ class Diagnosis:
         plt.plot(x, mean, linestyle="-", color="blue", alpha=alpha)
         plt.plot(x, self._rolling_average(mean), linestyle="-", color="blue")
         plt.xlabel("Iteration")
-        plt.xscale('log')
-        plt.ylabel(f"Global acceptance (f{which})")
+        # plt.xscale('log')
+        plt.ylabel(f"Global acceptance ({which})")
         plt.ylim(0-eps, 1+eps)
         plt.savefig(self.outdir_name + f"global_accs_{which}.png", bbox_inches='tight')
         
@@ -126,13 +129,14 @@ class Diagnosis:
         mean, std = self._get_mean_and_std_chains(log_prob)
         x = [i for i in range(len(mean))]
         plt.plot(x, mean, linestyle="-", color="blue")
-        plt.fill_between(x, y1=mean - std, y2=mean + std, color="blue", alpha=alpha)
+        # plt.fill_between(x, y1=mean - std, y2=mean + std, color="blue", alpha=alpha) # very noisy!
         plt.xlabel("Iteration")
-        plt.xscale('log')
-        plt.ylabel(f"Log prob (f{which})")
+        # plt.xscale('log')
+        plt.ylabel(f"Log prob ({which})")
         plt.savefig(self.outdir_name + f"log_prob_{which}.png", bbox_inches='tight')
         
         # For training, also plot the loss
+        # TODO this plot needs to be fixed, not informative right now
         if which == "training":
             loss_vals = data["loss_vals"]    
             print(jnp.shape(loss_vals))
@@ -143,10 +147,12 @@ class Diagnosis:
             plt.plot(x, mean, linestyle="-", color="blue")
             plt.fill_between(x, y1=mean - std, y2=mean + std, color="blue", alpha=alpha)
             plt.xlabel("Iteration")
-            plt.xscale('log')
-            plt.ylabel(f"Loss values (f{which})")
+            # plt.xscale('log')
+            plt.ylabel(f"Loss values ({which})")
             plt.savefig(self.outdir_name + f"loss_nf.png", bbox_inches='tight')
             
+        
+    
         
     # TODO cumbersome implementation for now, can be improved in the future
     def gelman_rubin(self, discard_fraction: float = 0.1, n_points=10):

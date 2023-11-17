@@ -11,6 +11,9 @@ from tqdm import tqdm
 import equinox as eqx
 import numpy as np
 
+from flowMC.utils import gelman_rubin
+from flowMC.utils.hyperparameters import hyperparameters, update_hyperparameters
+
 
 class Sampler:
     """
@@ -60,30 +63,16 @@ class Sampler:
         self.rng_keys_mcmc = rng_keys_mcmc
         self.n_dim = n_dim
 
-        self.n_loop_training = kwargs.get("n_loop_training", 3)
-        self.n_loop_production = kwargs.get("n_loop_production", 3)
-        self.n_local_steps = kwargs.get("n_local_steps", 50)
-        self.n_global_steps = kwargs.get("n_global_steps", 50)
-        self.n_chains = kwargs.get("n_chains", 20)
-        self.n_epochs = kwargs.get("n_epochs", 30)
-        self.learning_rate = kwargs.get("learning_rate", 0.01)
-        self.max_samples = kwargs.get("max_samples", 100000)
-        self.momentum = kwargs.get("momentum", 0.9)
-        self.batch_size = kwargs.get("batch_size", 10000)
-        self.use_global = kwargs.get("use_global", True)
-        self.logging = kwargs.get("logging", True)
-        self.keep_quantile = kwargs.get("keep_quantile", 0)
-        self.local_autotune = kwargs.get("local_autotune", None)
-        self.train_thinning = kwargs.get("train_thinning", 1)
-        self.output_thinning = kwargs.get("output_thinning", 1)
-        self.n_sample_max = kwargs.get("n_sample_max", 10000)
-        self.precompile = kwargs.get("precompile", False)
-        self.verbose = kwargs.get("verbose", False)
-
+        # Set and override any given hyperparameters
+        self.hyperparameters = hyperparameters
+        self.hyperparameters = update_hyperparameters(self.hyperparameters, kwargs)
+        
+        for key, value in self.hyperparameters.items():
+            setattr(self, key, value)
+        
         self.variables = {"mean": None, "var": None}
 
         # Initialized local and global samplers
-
         self.local_sampler = local_sampler
         if self.precompile:
             self.local_sampler.precompilation(
@@ -98,7 +87,14 @@ class Sampler:
         self.optim_state = tx.init(eqx.filter(self.nf_model, eqx.is_array))
         self.nf_training_loop, train_epoch, train_step = make_training_loop(tx)
 
-        # Initialized result dictionary
+        # Initialized result dictionaries
+        pretraining = {}
+        pretraining["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
+        pretraining["log_prob"] = jnp.empty((self.n_chains, 0))
+        pretraining["local_accs"] = jnp.empty((self.n_chains, 0))
+        pretraining["global_accs"] = jnp.empty((self.n_chains, 0))
+        pretraining["loss_vals"] = jnp.empty((0, self.n_epochs))
+        
         training = {}
         training["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
         training["log_prob"] = jnp.empty((self.n_chains, 0))
@@ -113,6 +109,7 @@ class Sampler:
         production["global_accs"] = jnp.empty((self.n_chains, 0))
 
         self.summary = {}
+        self.summary["pretraining"] = pretraining
         self.summary["training"] = training
         self.summary["production"] = production
 
@@ -136,13 +133,16 @@ class Sampler:
 
         self.local_sampler_tuning(initial_position, data)
         last_step = initial_position
+        
+        last_step = self.pretraining_run(last_step, data)
+        
         if self.use_global == True:
             last_step = self.global_sampler_tuning(last_step, data)
 
         last_step = self.production_run(last_step, data)
 
     def sampling_loop(
-        self, initial_position: jnp.array, data: jnp.array, training=False
+        self, initial_position: jnp.array, data: jnp.array, training=False, pretraining=False
     ) -> jnp.array:
         """
         One sampling loop that iterate through the local sampler and potentially the global sampler.
@@ -158,9 +158,12 @@ class Sampler:
 
         if training == True:
             summary_mode = "training"
+        elif pretraining == True:
+            summary_mode = "pretraining"
         else:
             summary_mode = "production"
 
+        # First run the local sampler
         self.rng_keys_mcmc, positions, log_prob, local_acceptance = self.local_sampler.sample(
             self.rng_keys_mcmc,
             self.n_local_steps,
@@ -169,6 +172,7 @@ class Sampler:
             verbose=self.verbose,
         )
 
+        # Save local sampler states
         self.summary[summary_mode]["chains"] = jnp.append(
             self.summary[summary_mode]["chains"], positions[:, ::self.output_thinning], axis=1
         )
@@ -180,6 +184,7 @@ class Sampler:
             self.summary[summary_mode]["local_accs"], local_acceptance[:, 1::self.output_thinning], axis=1
         )
 
+        # Run global sampler
         if self.use_global == True:
             if training == True:
                 positions = self.summary["training"]["chains"][
@@ -195,6 +200,7 @@ class Sampler:
                     cut_chains = positions[max_log_prob > cut]
                 else:
                     cut_chains = positions
+                
                 chain_size = cut_chains.shape[0] * cut_chains.shape[1]
                 if chain_size > self.max_samples:
                     flat_chain = cut_chains[
@@ -263,6 +269,7 @@ class Sampler:
                 axis=1,
             )
 
+        # Finally, return the final chain
         last_step = self.summary[summary_mode]["chains"][:, -1]
 
         return last_step
@@ -319,6 +326,33 @@ class Sampler:
             last_step = self.sampling_loop(last_step, data, training=True)
         return last_step
 
+    def pretraining_run(
+        self, initial_position: jnp.ndarray, data: jnp.array
+    ) -> jnp.array:
+        """
+        Sampling procedure that takes place before starting training on NF.
+        The data is stored in the summary dictionary and can be accessed through the `get_sampler_state` method.
+
+        Args:
+            initial_position (Device Array): Initial position for the sampler, shape (n_chains, n_dim)
+
+        """
+        print("Starting pretraining run")
+        last_step = initial_position
+        # TODO change condition based on Gelman-Rubin
+        for _ in tqdm(
+            range(self.n_loop_pretraining),
+            desc="Pretraining run",
+        ):
+            last_step = self.sampling_loop(last_step, data, pretraining=True)
+            # TODO remove this testing/debugging
+            test = self.get_sampler_state(which="pretraining")["chains"]
+            print(jnp.shape(test))
+            R = gelman_rubin(test)
+            print("R")
+            print(R)
+        return last_step
+
     def production_run(
         self, initial_position: jnp.ndarray, data: jnp.array
     ) -> jnp.array:
@@ -341,7 +375,7 @@ class Sampler:
             last_step = self.sampling_loop(last_step, data)
         return last_step
 
-    def get_sampler_state(self, training: bool = False) -> dict:
+    def get_sampler_state(self, which: str="production") -> dict:
         """
         Get the sampler state. There are two sets of sampler outputs one can get,
         the training set and the production set.
@@ -354,10 +388,10 @@ class Sampler:
             training (bool): Whether to get the training set sampler state. Defaults to False.
 
         """
-        if training == True:
-            return self.summary["training"]
+        if which not in ["pretraining", "training", "production"]:
+            raise ValueError("Get sampler state got incorrect key")
         else:
-            return self.summary["production"]
+            return self.summary[which]
 
     def sample_flow(self, n_samples: int) -> jnp.ndarray:
         """
