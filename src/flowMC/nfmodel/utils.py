@@ -12,7 +12,7 @@ def make_training_loop(optim: optax.GradientTransformation) -> Callable:
     Create a function that trains an NF model.
 
     Args:
-        model (eqx.Model): NF model to train.
+        model (eqx.Module): NF model to train.
         optim (optax.GradientTransformation): Optimizer.
 
     Returns:
@@ -24,17 +24,17 @@ def make_training_loop(optim: optax.GradientTransformation) -> Callable:
         return -jnp.mean(model.log_prob(x))
 
     @eqx.filter_jit
-    def train_step(model, x, opt_state):
+    def train_step(model: eqx.Module, x: Array, opt_state: optax.OptState):
         """Train for a single step.
 
         Args:
-            model (eqx.Model): NF model to train.
+            model (eqx.Module): NF model to train.
             x (Array): Training data.
             opt_state (optax.OptState): Optimizer state.
 
         Returns:
             loss (Array): Loss value.
-            model (eqx.Model): Updated model.
+            model (eqx.Module): Updated model.
             opt_state (optax.OptState): Updated optimizer state.
         """
         loss, grads = loss_fn(model, x)
@@ -42,8 +42,20 @@ def make_training_loop(optim: optax.GradientTransformation) -> Callable:
         model = eqx.apply_updates(model, updates)
         return loss, model, opt_state
 
-    def train_epoch(rng, model, state, train_ds, batch_size):
-        """Train for a single epoch."""
+    def train_epoch(rng: PRNGKeyArray, model: eqx.Module, state: optax.OptState, train_ds: Array, batch_size: int):
+        """
+        Train for a single epoch.
+        Args:
+            rng (PRNGKeyArray): Random number generator key.
+            model (eqx.Module): NF model to train.
+            state (optax.OptState): Optimizer state.
+            train_ds (Array): Training dataset
+            batch_size (int): Size of batches
+        Returns:
+            value (float): Single loss value at the end of the epoch. 
+            model (eqx.Module): NF model to train.
+            state (optax.OptState): Optimizer state.
+        """
         train_ds_size = len(train_ds)
         steps_per_epoch = train_ds_size // batch_size
         if steps_per_epoch > 0:
@@ -80,16 +92,21 @@ def make_training_loop(optim: optax.GradientTransformation) -> Callable:
 
         Returns:
             rng (PRNGKeyArray): Updated JAX PRNGKey.
-            model (eqx.Model): Updated NF model.
+            model (eqx.Module): Updated NF model.
             loss_values (Array): Loss values.
         """
+        # Initialization
         loss_values = jnp.zeros(num_epochs)
+        best_model = model
+        best_loss = 1e9
+        
+        # Create a progess bar
         if verbose:
             pbar = trange(num_epochs, desc="Training NF", miniters=int(num_epochs / 10))
         else:
             pbar = range(num_epochs)
-        best_model = model
-        best_loss = 1e9
+        
+        # Iterate over given number of epochs
         for epoch in pbar:
             # Use a separate PRNG key to permute image data during shuffling
             rng, input_rng = jax.random.split(rng)

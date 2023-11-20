@@ -9,7 +9,7 @@ from flowMC.nfmodel.utils import *
 from flowMC.sampler.MALA import MALA
 from flowMC.sampler.Sampler import Sampler
 from flowMC.utils.PRNG_keys import initialize_rng_keys
-from flowMC.utils.diagnosis import Diagnosis
+from flowMC.utils import compute_autocorrelation_time
 
 import pickle
 
@@ -26,8 +26,9 @@ def target_dualmoon(x, data):
 
 n_dim = 5
 n_chains = 20
-n_loop_training = 5
-n_loop_production = 5
+n_loop_pretraining = 1
+n_loop_training = 1
+n_loop_production = 10
 n_local_steps = 100
 n_global_steps = 100
 learning_rate = 0.001
@@ -52,6 +53,7 @@ nf_sampler = Sampler(
     jnp.zeros(5),
     MALA_Sampler,
     model,
+    n_loop_pretraining=n_loop_pretraining,
     n_loop_training=n_loop_training,
     n_loop_production=n_loop_production,
     n_local_steps=n_local_steps,
@@ -65,74 +67,86 @@ nf_sampler = Sampler(
 )
 
 nf_sampler.sample(initial_position, data)
-summary = nf_sampler.get_sampler_state(training=True)
-chains, log_prob, local_accs, global_accs, loss_vals = summary.values()
-nf_samples = nf_sampler.sample_flow(10000)
+# summary = nf_sampler.get_sampler_state(training=True)
+# chains, log_prob, local_accs, global_accs, loss_vals = summary.values()
+# nf_samples = nf_sampler.sample_flow(10000)
 
-print(
-    "chains shape: ",
-    chains.shape,
-    "local_accs shape: ",
-    local_accs.shape,
-    "global_accs shape: ",
-    global_accs.shape,
-)
+# print(
+#     "chains shape: ",
+#     chains.shape,
+#     "local_accs shape: ",
+#     local_accs.shape,
+#     "global_accs shape: ",
+#     global_accs.shape,
+# )
 
-chains = np.array(chains)
-nf_samples = np.array(nf_samples[1])
-loss_vals = np.array(loss_vals)
+# chains = np.array(chains)
+# nf_samples = np.array(nf_samples[1])
+# loss_vals = np.array(loss_vals)
 
-import corner
-import matplotlib.pyplot as plt
+# import corner
+# import matplotlib.pyplot as plt
 
-# Plot one chain to show the jump
-plt.figure(figsize=(6, 6))
-axs = [plt.subplot(2, 2, i + 1) for i in range(4)]
-plt.sca(axs[0])
-plt.title("2 chains")
-plt.plot(chains[0, :, 0], chains[0, :, 1], alpha=0.5)
-plt.plot(chains[1, :, 0], chains[1, :, 1], alpha=0.5)
-plt.xlabel("$x_1$")
-plt.ylabel("$x_2$")
+# # Plot one chain to show the jump
+# plt.figure(figsize=(6, 6))
+# axs = [plt.subplot(2, 2, i + 1) for i in range(4)]
+# plt.sca(axs[0])
+# plt.title("2 chains")
+# plt.plot(chains[0, :, 0], chains[0, :, 1], alpha=0.5)
+# plt.plot(chains[1, :, 0], chains[1, :, 1], alpha=0.5)
+# plt.xlabel("$x_1$")
+# plt.ylabel("$x_2$")
 
-plt.sca(axs[1])
-plt.title("NF loss")
-plt.plot(loss_vals.reshape(-1))
-plt.xlabel("iteration")
+# plt.sca(axs[1])
+# plt.title("NF loss")
+# plt.plot(loss_vals.reshape(-1))
+# plt.xlabel("iteration")
 
-plt.sca(axs[2])
-plt.title("Local Acceptance")
-plt.plot(local_accs.mean(0))
-plt.xlabel("iteration")
+# plt.sca(axs[2])
+# plt.title("Local Acceptance")
+# plt.plot(local_accs.mean(0))
+# plt.xlabel("iteration")
 
-plt.sca(axs[3])
-plt.title("Global Acceptance")
-plt.plot(global_accs.mean(0))
-plt.xlabel("iteration")
-plt.tight_layout()
-plt.show(block=False)
+# plt.sca(axs[3])
+# plt.title("Global Acceptance")
+# plt.plot(global_accs.mean(0))
+# plt.xlabel("iteration")
+# plt.tight_layout()
+# plt.show(block=False)
 
-# Plot all chains
-figure = corner.corner(
-    chains.reshape(-1, n_dim), labels=["$x_1$", "$x_2$", "$x_3$", "$x_4$", "$x_5$"]
-)
-figure.set_size_inches(7, 7)
-figure.suptitle("Visualize samples")
-plt.show(block=False)
+# # Plot all chains
+# figure = corner.corner(
+#     chains.reshape(-1, n_dim), labels=["$x_1$", "$x_2$", "$x_3$", "$x_4$", "$x_5$"]
+# )
+# figure.set_size_inches(7, 7)
+# figure.suptitle("Visualize samples")
+# plt.show(block=False)
 
-# Plot Nf samples
-figure = corner.corner(nf_samples, labels=["$x_1$", "$x_2$", "$x_3$", "$x_4$", "$x_5$"])
-figure.set_size_inches(7, 7)
-figure.suptitle("Visualize NF samples")
-plt.show()
+# # Plot Nf samples
+# figure = corner.corner(nf_samples, labels=["$x_1$", "$x_2$", "$x_3$", "$x_4$", "$x_5$"])
+# figure.set_size_inches(7, 7)
+# figure.suptitle("Visualize NF samples")
+# plt.show()
 
-print("Saving summary object with pickle")
-with open('outdir/summary.pickle', 'wb') as handle:
-    pickle.dump(summary, handle, protocol=pickle.HIGHEST_PROTOCOL)
+print("Post-production phase")
 
-diagnosis = Diagnosis(nf_sampler)
-result = diagnosis.gelman_rubin()
+# print("Saving summary object with pickle")
+# with open('outdir/summary.pickle', 'wb') as handle:
+#     pickle.dump(summary, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-print(result)
+nf_sampler.plot_summary("pretraining")
+nf_sampler.plot_summary("training")
+nf_sampler.plot_summary("production")
 
-diagnosis.plot_summary(which="training")
+chains = nf_sampler.get_sampler_state("pretraining")["chains"]
+test = compute_autocorrelation_time(chains)
+print("test: pretraining")
+print(test)
+chains = nf_sampler.get_sampler_state("training")["chains"]
+test = compute_autocorrelation_time(chains)
+print("test: training")
+print(test)
+chains = nf_sampler.get_sampler_state("production")["chains"]
+test = compute_autocorrelation_time(chains)
+print("test: production")
+print(test)

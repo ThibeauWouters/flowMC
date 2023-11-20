@@ -11,9 +11,27 @@ from tqdm import tqdm
 import equinox as eqx
 import numpy as np
 
-from flowMC.utils import gelman_rubin
+from flowMC.utils import gelman_rubin, get_mean_and_std_chains, initialize_summary_dict
 from flowMC.utils.hyperparameters import hyperparameters, update_hyperparameters
 
+import matplotlib.pyplot as plt
+
+plotparams = {"axes.grid": True,
+        "text.usetex" : True,
+        "font.family" : "serif",
+        "ytick.color" : "black",
+        "xtick.color" : "black",
+        "axes.labelcolor" : "black",
+        "axes.edgecolor" : "black",
+        "font.serif" : ["Computer Modern Serif"],
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
+        "axes.labelsize": 16,
+        "legend.fontsize": 16,
+        "legend.title_fontsize": 16,
+        "figure.titlesize": 16}
+
+plt.rcParams.update(plotparams)
 
 class Sampler:
     """
@@ -88,25 +106,27 @@ class Sampler:
         self.nf_training_loop, train_epoch, train_step = make_training_loop(tx)
 
         # Initialized result dictionaries
-        pretraining = {}
-        pretraining["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
-        pretraining["log_prob"] = jnp.empty((self.n_chains, 0))
-        pretraining["local_accs"] = jnp.empty((self.n_chains, 0))
-        pretraining["global_accs"] = jnp.empty((self.n_chains, 0))
-        pretraining["loss_vals"] = jnp.empty((0, self.n_epochs))
+        pretraining = initialize_summary_dict(self)
+        # pretraining["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
+        # pretraining["log_prob"] = jnp.empty((self.n_chains, 0))
+        # pretraining["local_accs"] = jnp.empty((self.n_chains, 0))
+        # pretraining["global_accs"] = jnp.empty((self.n_chains, 0))
+        # pretraining["gelman_rubin"] = jnp.empty((self.n_dim, 0))
         
-        training = {}
-        training["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
-        training["log_prob"] = jnp.empty((self.n_chains, 0))
-        training["local_accs"] = jnp.empty((self.n_chains, 0))
-        training["global_accs"] = jnp.empty((self.n_chains, 0))
-        training["loss_vals"] = jnp.empty((0, self.n_epochs))
+        training = initialize_summary_dict(self, use_loss_vals=True)
+        # training["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
+        # training["log_prob"] = jnp.empty((self.n_chains, 0))
+        # training["local_accs"] = jnp.empty((self.n_chains, 0))
+        # training["global_accs"] = jnp.empty((self.n_chains, 0))
+        # training["loss_vals"] = jnp.empty((0, self.n_epochs))
+        # training["gelman_rubin"] = jnp.empty((self.n_dim, 0))
 
-        production = {}
-        production["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
-        production["log_prob"] = jnp.empty((self.n_chains, 0))
-        production["local_accs"] = jnp.empty((self.n_chains, 0))
-        production["global_accs"] = jnp.empty((self.n_chains, 0))
+        production = initialize_summary_dict(self)
+        # production["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
+        # production["log_prob"] = jnp.empty((self.n_chains, 0))
+        # production["local_accs"] = jnp.empty((self.n_chains, 0))
+        # production["global_accs"] = jnp.empty((self.n_chains, 0))
+        # production["gelman_rubin"] = jnp.empty((self.n_dim, 0))
 
         self.summary = {}
         self.summary["pretraining"] = pretraining
@@ -184,7 +204,7 @@ class Sampler:
             self.summary[summary_mode]["local_accs"], local_acceptance[:, 1::self.output_thinning], axis=1
         )
 
-        # Run global sampler
+        # Run global sampler (if specified)
         if self.use_global == True:
             if training == True:
                 positions = self.summary["training"]["chains"][
@@ -269,8 +289,16 @@ class Sampler:
                 axis=1,
             )
 
-        # Finally, return the final chain
+        # Finally, return all final chain's final positions
         last_step = self.summary[summary_mode]["chains"][:, -1]
+        
+        # TODO verify correctness, Compute Gelman-Rubin R for post-run diagnosis
+        chains = self.summary[summary_mode]["chains"]
+        R = gelman_rubin(chains)
+        R = jnp.reshape(R, (-1, 1))
+        self.summary[summary_mode]["gelman_rubin"] = jnp.append(
+            self.summary[summary_mode]["gelman_rubin"], R, axis=1
+        )
 
         return last_step
 
@@ -339,18 +367,13 @@ class Sampler:
         """
         print("Starting pretraining run")
         last_step = initial_position
-        # TODO change condition based on Gelman-Rubin
+        # TODO fix the Gelman-Rubin during pretraining?
+        # TODO change condition based on Gelman-Rubin?
         for _ in tqdm(
             range(self.n_loop_pretraining),
             desc="Pretraining run",
         ):
             last_step = self.sampling_loop(last_step, data, pretraining=True)
-            # TODO remove this testing/debugging
-            test = self.get_sampler_state(which="pretraining")["chains"]
-            print(jnp.shape(test))
-            R = gelman_rubin(test)
-            print("R")
-            print(R)
         return last_step
 
     def production_run(
@@ -529,3 +552,36 @@ class Sampler:
         """
         with open(path, "wb") as f:
             pickle.dump(self.summary, f)
+            
+    def _single_plot(self, data: dict, name: str, which: str = "training", **plotkwargs):
+        # Get plot kwargs
+        figsize = plotkwargs["figsize"] if "figsize" in plotkwargs else (12, 8)
+        alpha = plotkwargs["alpha"] if "alpha" in plotkwargs else 1
+
+        plotdata = data[name]        
+
+        eps=1e-3
+        plt.figure(figsize=figsize)
+        mean, _ = get_mean_and_std_chains(plotdata)
+        x = [i+1 for i in range(len(mean))]
+        plt.plot(x, mean, linestyle="-", color="blue", alpha=alpha)
+        plt.xlabel("Iteration")
+        plt.ylabel(f"{name} ({which})")
+        # Extras for some variables:
+        if "acc" in name:
+            plt.ylim(0-eps, 1+eps)
+            
+        if "gelman_rubin" in name:
+            plt.axhline(1.1) # usual threshold for Gelman-Rubin R
+        plt.savefig(f"{self.outdir_name}{name}_{which}.png", bbox_inches='tight')
+
+    def plot_summary(self, which: str = "training", **plotkwargs):
+        
+        # Choose the dataset
+        data = self.get_sampler_state(which)
+        keys = ["local_accs", "global_accs", "log_prob", "gelman_rubin"]
+        if which == "training":
+            keys = keys + ["loss_vals"]
+        
+        for key in keys:
+            self._single_plot(data, key, which, **plotkwargs)

@@ -38,7 +38,8 @@ hyperparameters = {
     "output_thinning": 1,
     "n_sample_max": 10000,
     "precompile": False,
-    "verbose": False
+    "verbose": False,
+    "outdir_name": "./outdir/"
 }
 
 hyperparameters_keys = list(hyperparameters.keys())
