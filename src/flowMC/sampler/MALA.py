@@ -14,7 +14,7 @@ class MALA(ProposalBase):
 
     Args:
         logpdf: target logpdf function
-        jit: whether to jit the sampler
+        jit: whether to jitw the sampler
         params: dictionary of parameters for the sampler
     """
 

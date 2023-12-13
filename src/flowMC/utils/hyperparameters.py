@@ -1,32 +1,12 @@
-hyperparameters = dict()
-
-# TODO improve organisation here
-
-# n_loop_training (int, optional): Number of training loops. Defaults to 3.
-# n_loop_production (int, optional): Number of production loops. Defaults to 3.
-# n_local_steps (int, optional): Number of local steps per loop. Defaults to 50.
-# n_global_steps (int, optional): Number of global steps per loop. Defaults to 50.
-# n_chains (int, optional): Number of chains. Defaults to 20.
-# n_epochs (int, optional): Number of epochs per training loop. Defaults to 30.
-# learning_rate (float, optional): Learning rate for the NF model. Defaults to 0.01.
-# max_samples (int, optional): Maximum number of samples fed to training the NF model. Defaults to 10000.
-# momentum (float, optional): Momentum for the NF model. Defaults to 0.9.
-# batch_size (int, optional): Batch size for the NF model. Defaults to 10000.
-# use_global (bool, optional): Whether to use global sampler. Defaults to True.
-# logging (bool, optional): Whether to log the training process. Defaults to True.
-# keep_quantile (float, optional): Quantile of chains to keep when training the normalizing flow model. Defaults to 0..
-# local_autotune (None, optional): Auto-tune function for the local sampler. Defaults to None.
-# train_thinning (int, optional): Thinning for the data used to train the normalizing flow. Defaults to 1.
-
-hyperparameters = {
+flowmc_default_hyperparameters = {
     "n_loop_training": 3,
     "n_loop_production": 3,
-    "n_loop_pretraining": 3,
+    "n_loop_pretraining": 0,
     "n_local_steps": 50,
     "n_global_steps": 50,
     "n_chains": 20,
     "n_epochs": 30,
-    "learning_rate": 0.01,
+    "learning_rate": 0.001,
     "max_samples": 100000,
     "momentum": 0.9,
     "batch_size": 10000,
@@ -42,9 +22,34 @@ hyperparameters = {
     "outdir_name": "./outdir/"
 }
 
-hyperparameters_keys = list(hyperparameters.keys())
+flowmc_hyperparameters_explanation = {
+    "n_loop_training": "(int): Number of training loops.",
+    "n_loop_production": "(int): Number of production loops.",
+    "n_loop_pretraining": "(int): Number of pretraining loops.",
+    "n_local_steps": "(int) Number of local steps per loop.",
+    "n_global_steps": "(int) Number of local steps per loop.",
+    "n_chains": "(int) Number of chains",
+    "n_epochs": "(int) Number of epochs to train the NF per training loop",
+    "learning_rate": "(float) Learning rate used in the training of the NF",
+    "max_samples": "(int) Maximum number of samples fed to training the NF model",
+    "momentum": "(float) Momentum used in the training of the NF model with the Adam optimizer",
+    "batch_size": "(int) Size of batches used to train the NF",
+    "use_global": "(bool) Whether to use an NF proposal as global sampler",
+    "logging": "(bool) Whether to log the training process",
+    "keep_quantile": "Quantile of chains to keep when training the normalizing flow model",
+    "local_autotune": "(Callable) Auto-tune function for the local sampler",
+    "train_thinning": "(int) Thinning parameter for the data used to train the normalizing flow",
+    "output_thinning": "(int) Thinning parameter with which to save the data ",
+    # TODO is this n_sample_max duplicate with max_samples above? Or is this something else?
+    "n_sample_max": "(int) Maximum number of samples fed to training the NF model",
+    "precompile": "(bool) Whether to precompile",
+    "verbose": "(bool) Show steps of algorithm in detail",
+    "outdir_name": "(str) Location to which to save plots, samples and hyperparameter settings. Note: should ideally start with `./` and also end with `/`"
+}
 
-def update_hyperparameters(dict1: dict, dict2: dict):
-    """Update dict1 with values of dict2 but only consider the keys given."""
-    dict1.update((k, dict2[k]) for k in dict1.keys() & dict2.keys())
-    return dict1
+### TODO if not used, then delete
+# flowmc_hyperparameters_names = list(flowmc_default_hyperparameters.keys())
+# def update_hyperparameters(dict1: dict, dict2: dict):
+#     """Update dict1 with values of dict2 but only consider the keys given."""
+#     dict1.update((k, dict2[k]) for k in dict1.keys() & dict2.keys())
+#     return dict1

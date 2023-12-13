@@ -1,4 +1,4 @@
-from evosax import CMA_ES
+from evosax import Strategies
 import jax
 import jax.numpy as jnp
 import tqdm
@@ -37,9 +37,20 @@ class EvolutionaryOptimizer:
         Get the best member and the best fitness.
     """
 
-    def __init__(self, ndims, popsize=100, verbose=False):
-        self.strategy = CMA_ES(num_dims=ndims, popsize=popsize, elite_ratio=0.5)
-        self.es_params = self.strategy.default_params.replace(clip_min=0, clip_max=1)
+    def __init__(self, ndims:int, popsize:int=100, verbose:bool=False, which_ES: str="CMA_ES", **ES_kwargs):
+        
+        # Check if given ES is supported
+        supported_strategies = Strategies.keys()
+        if which_ES not in supported_strategies:
+            print(f"Unsupported evolutionary strategy: {which_ES}. Defaulting to CMA_ES.")
+            which_ES = "CMA_ES"
+        
+        # Select that ES
+        strategy = Strategies[which_ES](popsize=popsize, num_dims=ndims)
+        params = strategy.default_params.replace(clip_min=0, clip_max=1)
+        
+        self.strategy = strategy
+        self.es_params = params
         self.verbose = verbose
 
     def optimize(self, objective, bound, n_loops = 100, seed = 9527):

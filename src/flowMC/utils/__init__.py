@@ -126,3 +126,21 @@ def initialize_summary_dict(sampler, use_loss_vals = False):
         
     return my_dict
     
+    
+default_corner_kwargs = dict(bins=40, 
+                    smooth=1., 
+                    show_titles=False,
+                    label_kwargs=dict(fontsize=16),
+                    title_kwargs=dict(fontsize=16), 
+                    color="blue",
+                    # quantiles=[],
+                    # levels=[0.9],
+                    plot_density=True, 
+                    plot_datapoints=False, 
+                    fill_contours=True,
+                    max_n_ticks=4, 
+                    min_n_ticks=3,
+                    save=False)
+
+IMRPhenomD_labels = [r'$M_c/M_\odot$', r'$q$', r'$\chi_1$', r'$\chi_2$', r'$d_{\rm{L}}/{\rm Mpc}$', r"$t_c$"
+               r'$\phi_c$', r'$\iota$', r'$\psi$', r'$\alpha$', r'$\delta$']

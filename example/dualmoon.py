@@ -26,8 +26,8 @@ def target_dualmoon(x, data):
 
 n_dim = 5
 n_chains = 20
-n_loop_pretraining = 1
-n_loop_training = 1
+n_loop_pretraining = 0
+n_loop_training = 10
 n_loop_production = 10
 n_local_steps = 100
 n_global_steps = 100
@@ -138,15 +138,19 @@ nf_sampler.plot_summary("pretraining")
 nf_sampler.plot_summary("training")
 nf_sampler.plot_summary("production")
 
-chains = nf_sampler.get_sampler_state("pretraining")["chains"]
-test = compute_autocorrelation_time(chains)
-print("test: pretraining")
-print(test)
-chains = nf_sampler.get_sampler_state("training")["chains"]
-test = compute_autocorrelation_time(chains)
-print("test: training")
-print(test)
-chains = nf_sampler.get_sampler_state("production")["chains"]
-test = compute_autocorrelation_time(chains)
-print("test: production")
-print(test)
+# TODO plot true dataset on top?
+nf_sampler.plot_chains("./outdir/")
+
+# TODO get this working
+# chains = nf_sampler.get_sampler_state("pretraining")["chains"]
+# test = compute_autocorrelation_time(chains)
+# print("test: pretraining")
+# print(test)
+# chains = nf_sampler.get_sampler_state("training")["chains"]
+# test = compute_autocorrelation_time(chains)
+# print("test: training")
+# print(test)
+# chains = nf_sampler.get_sampler_state("production")["chains"]
+# test = compute_autocorrelation_time(chains)
+# print("test: production")
+# print(test)

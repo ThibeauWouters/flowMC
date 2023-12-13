@@ -1,63 +1,26 @@
 import pickle
+from tqdm import tqdm
+import numpy as np
+import matplotlib.pyplot as plt
+import corner
 from typing import Callable, Tuple
+
 import jax.numpy as jnp
 from jaxtyping import Array, Int, Float
+import optax
+import equinox as eqx
+
 from flowMC.nfmodel.utils import make_training_loop
 from flowMC.sampler.NF_proposal import NFProposal
-import optax
 from flowMC.sampler.Proposal_Base import ProposalBase
 from flowMC.nfmodel.base import NFModel
-from tqdm import tqdm
-import equinox as eqx
-import numpy as np
-
-from flowMC.utils import gelman_rubin, get_mean_and_std_chains, initialize_summary_dict
-from flowMC.utils.hyperparameters import hyperparameters, update_hyperparameters
-
-import matplotlib.pyplot as plt
-
-plotparams = {"axes.grid": True,
-        "text.usetex" : True,
-        "font.family" : "serif",
-        "ytick.color" : "black",
-        "xtick.color" : "black",
-        "axes.labelcolor" : "black",
-        "axes.edgecolor" : "black",
-        "font.serif" : ["Computer Modern Serif"],
-        "xtick.labelsize": 16,
-        "ytick.labelsize": 16,
-        "axes.labelsize": 16,
-        "legend.fontsize": 16,
-        "legend.title_fontsize": 16,
-        "figure.titlesize": 16}
-
-plt.rcParams.update(plotparams)
+from flowMC.utils import gelman_rubin, get_mean_and_std_chains, initialize_summary_dict, default_corner_kwargs, IMRPhenomD_labels
+from flowMC.utils.hyperparameters import flowmc_default_hyperparameters
 
 class Sampler:
     """
-    Sampler class that host configuration parameters, NF model, and local sampler
+    Sampler class that host configuration parameters, NF model, and local sampler. Kwargs hyperparameters are explained in its utils file.
 
-    Args:
-        n_dim (int): Dimension of the problem.
-        rng_key_set (Tuple): Tuple of random number generator keys.
-        data (Device Array): Extra data to be passed to the likelihood function.
-        local_sampler (Callable): Local sampler maker
-        nf_model (NFModel): Normalizing flow model.
-        n_loop_training (int, optional): Number of training loops. Defaults to 3.
-        n_loop_production (int, optional): Number of production loops. Defaults to 3.
-        n_local_steps (int, optional): Number of local steps per loop. Defaults to 50.
-        n_global_steps (int, optional): Number of global steps per loop. Defaults to 50.
-        n_chains (int, optional): Number of chains. Defaults to 20.
-        n_epochs (int, optional): Number of epochs per training loop. Defaults to 30.
-        learning_rate (float, optional): Learning rate for the NF model. Defaults to 0.01.
-        max_samples (int, optional): Maximum number of samples fed to training the NF model. Defaults to 10000.
-        momentum (float, optional): Momentum for the NF model. Defaults to 0.9.
-        batch_size (int, optional): Batch size for the NF model. Defaults to 10000.
-        use_global (bool, optional): Whether to use global sampler. Defaults to True.
-        logging (bool, optional): Whether to log the training process. Defaults to True.
-        keep_quantile (float, optional): Quantile of chains to keep when training the normalizing flow model. Defaults to 0..
-        local_autotune (None, optional): Auto-tune function for the local sampler. Defaults to None.
-        train_thinning (int, optional): Thinning for the data used to train the normalizing flow. Defaults to 1.
     """
 
     @property
@@ -82,12 +45,15 @@ class Sampler:
         self.n_dim = n_dim
 
         # Set and override any given hyperparameters
-        self.hyperparameters = hyperparameters
-        self.hyperparameters = update_hyperparameters(self.hyperparameters, kwargs)
+        self.hyperparameters = flowmc_default_hyperparameters
+        hyperparameter_names = list(flowmc_default_hyperparameters.keys())
         
+        for key, value in kwargs.items():
+            if key in hyperparameter_names:
+                self.hyperparameters[key] = value
         for key, value in self.hyperparameters.items():
             setattr(self, key, value)
-        
+            
         self.variables = {"mean": None, "var": None}
 
         # Initialized local and global samplers
@@ -107,26 +73,8 @@ class Sampler:
 
         # Initialized result dictionaries
         pretraining = initialize_summary_dict(self)
-        # pretraining["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
-        # pretraining["log_prob"] = jnp.empty((self.n_chains, 0))
-        # pretraining["local_accs"] = jnp.empty((self.n_chains, 0))
-        # pretraining["global_accs"] = jnp.empty((self.n_chains, 0))
-        # pretraining["gelman_rubin"] = jnp.empty((self.n_dim, 0))
-        
         training = initialize_summary_dict(self, use_loss_vals=True)
-        # training["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
-        # training["log_prob"] = jnp.empty((self.n_chains, 0))
-        # training["local_accs"] = jnp.empty((self.n_chains, 0))
-        # training["global_accs"] = jnp.empty((self.n_chains, 0))
-        # training["loss_vals"] = jnp.empty((0, self.n_epochs))
-        # training["gelman_rubin"] = jnp.empty((self.n_dim, 0))
-
         production = initialize_summary_dict(self)
-        # production["chains"] = jnp.empty((self.n_chains, 0, self.n_dim))
-        # production["log_prob"] = jnp.empty((self.n_chains, 0))
-        # production["local_accs"] = jnp.empty((self.n_chains, 0))
-        # production["global_accs"] = jnp.empty((self.n_chains, 0))
-        # production["gelman_rubin"] = jnp.empty((self.n_dim, 0))
 
         self.summary = {}
         self.summary["pretraining"] = pretraining
@@ -154,12 +102,14 @@ class Sampler:
         self.local_sampler_tuning(initial_position, data)
         last_step = initial_position
         
-        last_step = self.pretraining_run(last_step, data)
+        if self.n_loop_pretraining > 0:
+            last_step = self.pretraining_run(last_step, data)
         
-        if self.use_global == True:
+        if self.use_global == True and self.n_loop_training > 0:
             last_step = self.global_sampler_tuning(last_step, data)
 
-        last_step = self.production_run(last_step, data)
+        if self.n_loop_production > 0:
+            last_step = self.production_run(last_step, data)
 
     def sampling_loop(
         self, initial_position: jnp.array, data: jnp.array, training=False, pretraining=False
@@ -176,12 +126,14 @@ class Sampler:
             chains (jnp.array): Samples from the posterior. Shape (n_chains, n_local_steps + n_global_steps, n_dim)
         """
 
+        production = False
         if training == True:
             summary_mode = "training"
         elif pretraining == True:
             summary_mode = "pretraining"
         else:
             summary_mode = "production"
+            production = True
 
         # First run the local sampler
         self.rng_keys_mcmc, positions, log_prob, local_acceptance = self.local_sampler.sample(
@@ -261,7 +213,9 @@ class Sampler:
                     loss_values.reshape(1, -1),
                     axis=0,
                 )
-
+            # end if training=True
+            
+            # Sample globally
             (
                 self.rng_keys_nf,
                 nf_chain,
@@ -276,30 +230,31 @@ class Sampler:
                 verbose = self.verbose
             )
 
-            self.summary[summary_mode]["chains"] = jnp.append(
-                self.summary[summary_mode]["chains"], nf_chain[:, ::self.output_thinning], axis=1
-            )
-            self.summary[summary_mode]["log_prob"] = jnp.append(
-                self.summary[summary_mode]["log_prob"], log_prob[:, ::self.output_thinning], axis=1
-            )
+            # TODO this is wrong? Save the global samples only during production, or during training if specified
+            if True: #production or (training and self.save_global_samples_training):
+                self.summary[summary_mode]["chains"] = jnp.append(
+                    self.summary[summary_mode]["chains"], nf_chain[:, ::self.output_thinning], axis=1
+                )
+                self.summary[summary_mode]["log_prob"] = jnp.append(
+                    self.summary[summary_mode]["log_prob"], log_prob[:, ::self.output_thinning], axis=1
+                )
 
-            self.summary[summary_mode]["global_accs"] = jnp.append(
-                self.summary[summary_mode]["global_accs"],
-                global_acceptance[:, 1::self.output_thinning],
-                axis=1,
-            )
+                self.summary[summary_mode]["global_accs"] = jnp.append(
+                    self.summary[summary_mode]["global_accs"],
+                    global_acceptance[:, 1::self.output_thinning],
+                    axis=1,
+                )
+                
+                # TODO verify correctness, Compute Gelman-Rubin R for post-run diagnosis
+                chains = self.summary[summary_mode]["chains"]
+                R = gelman_rubin(chains)
+                R = jnp.reshape(R, (-1, 1))
+                self.summary[summary_mode]["gelman_rubin"] = jnp.append(
+                    self.summary[summary_mode]["gelman_rubin"], R, axis=1
+                )
 
         # Finally, return all final chain's final positions
         last_step = self.summary[summary_mode]["chains"][:, -1]
-        
-        # TODO verify correctness, Compute Gelman-Rubin R for post-run diagnosis
-        chains = self.summary[summary_mode]["chains"]
-        R = gelman_rubin(chains)
-        R = jnp.reshape(R, (-1, 1))
-        self.summary[summary_mode]["gelman_rubin"] = jnp.append(
-            self.summary[summary_mode]["gelman_rubin"], R, axis=1
-        )
-
         return last_step
 
     def local_sampler_tuning(
@@ -367,8 +322,6 @@ class Sampler:
         """
         print("Starting pretraining run")
         last_step = initial_position
-        # TODO fix the Gelman-Rubin during pretraining?
-        # TODO change condition based on Gelman-Rubin?
         for _ in tqdm(
             range(self.n_loop_pretraining),
             desc="Pretraining run",
@@ -430,7 +383,7 @@ class Sampler:
         samples = self.nf_model.sample(self.rng_keys_nf, n_samples)
         return samples
 
-    def evalulate_flow(self, samples: jnp.ndarray) -> jnp.ndarray:
+    def evaluate_flow(self, samples: jnp.ndarray) -> jnp.ndarray:
         """
         Evaluate the log probability of the normalizing flow.
 
@@ -585,3 +538,44 @@ class Sampler:
         
         for key in keys:
             self._single_plot(data, key, which, **plotkwargs)
+            
+    def plot_chains(self, outdir_name: str, which: str = "production", nb_samples: int = 10000) -> None:
+        # TODO add that user can give labels
+        
+        supported = ["pretraining", "training", "production", "NF"]
+        if which not in supported:
+            print(f"{which} for which in plot_chains not recognized, aborting plot creation")
+            return
+        
+        # Get desired samples
+        if which == "NF":
+            samples = self.Sampler.sample_flow(nb_samples)
+        else:
+            chains = self.get_sampler_state(which)["chains"]
+            # TODO make less cumbersome
+            samples = jnp.array([chains[:, :, i].flatten() for i in range(self.n_dim)])
+        
+        # Corner wants them as numpy array    
+        samples = np.asarray(samples)
+        
+        # TODO debugging, remove later:
+        print(jnp.shape(samples))
+            
+        # Make sure that we have the (n_samples, n_dim) format
+        if jnp.shape(samples)[0] < jnp.shape(samples)[1]:
+            samples = np.swapaxes(samples, 0, 1)
+        
+        # Get the desired labels
+        n_samples, n_dim = np.shape(samples)
+        if len(IMRPhenomD_labels) == n_dim:
+            labels = IMRPhenomD_labels
+        else:
+            print("Could not infer labels, setting to None")
+            labels = None
+            
+        # Plot chains
+        name = outdir_name + f"samples_{which}.png"
+        if self.verbose:
+            print(f"Saving plot of chains to {name}")
+        fig = corner.corner(samples, labels = labels, hist_kwargs={'density': True}, **default_corner_kwargs)
+        fig.savefig(name, bbox_inches='tight')  
