@@ -120,6 +120,8 @@ def initialize_summary_dict(sampler, use_loss_vals = False):
     my_dict["local_accs"] = jnp.empty((sampler.n_chains, 0))
     my_dict["global_accs"] = jnp.empty((sampler.n_chains, 0))
     my_dict["gelman_rubin"] = jnp.empty((sampler.n_dim, 0))
+    my_dict["gamma"] = jnp.empty(0) # single scalar, the rescaling factor for step size/mass matrix
+    my_dict["dt_test"] = jnp.empty(0) # TODO remove, for debugging
     
     if use_loss_vals:
         my_dict["loss_vals"] = jnp.empty((0, sampler.n_epochs))

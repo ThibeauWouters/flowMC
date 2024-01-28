@@ -10,6 +10,8 @@ from jaxtyping import Array, Int, Float
 import optax
 import equinox as eqx
 
+import jax
+
 from flowMC.nfmodel.utils import make_training_loop
 from flowMC.sampler.NF_proposal import NFProposal
 from flowMC.sampler.Proposal_Base import ProposalBase
@@ -34,6 +36,7 @@ class Sampler:
         data: jnp.ndarray,
         local_sampler: ProposalBase,
         nf_model: NFModel,
+        adaptive_step_size: bool = True,
         **kwargs,
     ):
         rng_key_init, rng_keys_mcmc, rng_keys_nf, init_rng_keys_nf = rng_key_set
@@ -43,6 +46,8 @@ class Sampler:
         self.rng_keys_nf = rng_keys_nf
         self.rng_keys_mcmc = rng_keys_mcmc
         self.n_dim = n_dim
+        self.adaptive_step_size = adaptive_step_size
+        print("Adaptive step size is set to: ", self.adaptive_step_size)
 
         # Set and override any given hyperparameters
         self.hyperparameters = flowmc_default_hyperparameters
@@ -155,7 +160,6 @@ class Sampler:
         self.summary[summary_mode]["local_accs"] = jnp.append(
             self.summary[summary_mode]["local_accs"], local_acceptance[:, 1::self.output_thinning], axis=1
         )
-
         # Run global sampler (if specified)
         if self.use_global == True:
             if training == True:
@@ -255,6 +259,23 @@ class Sampler:
 
         # Finally, return all final chain's final positions
         last_step = self.summary[summary_mode]["chains"][:, -1]
+        
+        # # TODO disable step size to check speed
+        # Adjust step size during training, if specified
+        if training and self.adaptive_step_size:
+            last_local_accs = jnp.mean(local_acceptance[:, 1::self.output_thinning])
+            gamma = compute_gamma(last_local_accs)
+            self.local_sampler.params["step_size"] *= gamma
+            
+            self.summary[summary_mode]["gamma"] = jnp.append(
+                self.summary[summary_mode]["gamma"], jnp.array([gamma]), axis=0
+            )
+            
+            # TODO for debugging
+            self.summary[summary_mode]["dt_test"] = jnp.append(
+                self.summary[summary_mode]["dt_test"], jnp.array([self.local_sampler.params["step_size"][0, 0]]), axis=0
+            )
+            
         return last_step
 
     def local_sampler_tuning(
@@ -515,7 +536,10 @@ class Sampler:
 
         eps=1e-3
         plt.figure(figsize=figsize)
-        mean, _ = get_mean_and_std_chains(plotdata)
+        if name == "gamma" or name == "dt_test":
+            mean= plotdata
+        else:
+            mean, _ = get_mean_and_std_chains(plotdata)
         x = [i+1 for i in range(len(mean))]
         plt.plot(x, mean, linestyle="-", color="blue", alpha=alpha)
         plt.xlabel("Iteration")
@@ -523,6 +547,10 @@ class Sampler:
         # Extras for some variables:
         if "acc" in name:
             plt.ylim(0-eps, 1+eps)
+            
+        if "local_acc" in name:
+            # TODO change this to only be used if we have MALA
+            plt.axhline(0.574, color="grey", linestyle="--")
             
         if "gelman_rubin" in name:
             plt.axhline(1.1) # usual threshold for Gelman-Rubin R
@@ -532,7 +560,7 @@ class Sampler:
         
         # Choose the dataset
         data = self.get_sampler_state(which)
-        keys = ["local_accs", "global_accs", "log_prob", "gelman_rubin"]
+        keys = ["local_accs", "global_accs", "log_prob", "gelman_rubin", "gamma", "dt_test"]
         if which == "training":
             keys = keys + ["loss_vals"]
         
@@ -579,3 +607,11 @@ class Sampler:
             print(f"Saving plot of chains to {name}")
         fig = corner.corner(samples, labels = labels, hist_kwargs={'density': True}, **default_corner_kwargs)
         fig.savefig(name, bbox_inches='tight')  
+        
+@jax.jit
+def compute_gamma(acceptance_rate, target_rate=0.574, width=0.5):
+    """Simple linear"""
+    gamma = width * (acceptance_rate - target_rate) + 1
+    """No change"""
+    # gamma = 1
+    return gamma

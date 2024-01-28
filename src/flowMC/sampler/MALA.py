@@ -19,16 +19,21 @@ class MALA(ProposalBase):
     """
 
     def __init__(
-        self, logpdf: Callable, jit: bool, params: dict, use_autotune=False
+        self, logpdf: Callable, jit: bool, params: dict, use_autotune=True,
     ):
         super().__init__(logpdf, jit, params)
         self.params = params
         self.logpdf = logpdf
         self.use_autotune = use_autotune
+    
+        if "eps_sigma" not in self.params:
+            print("No eps_sigma was given, using fixed step size")
+            self.params["eps_sigma"] = 0
 
     def body(self, carry, this_key):
         print("Compiling MALA body")
         this_position, dt, data = carry
+        jax.debug.print(str(dt[0, 0]))
         dt2 = dt * dt
         this_log_prob, this_d_log = jax.value_and_grad(self.logpdf)(this_position, data)
         proposal = this_position + jnp.dot(dt2, this_d_log) / 2
@@ -40,7 +45,7 @@ class MALA(ProposalBase):
         rng_key: PRNGKeyArray,
         position: Float[Array, "ndim"],
         log_prob: Float[Array, "1"],
-        data: PyTree,
+        data: PyTree
     ) -> tuple[
         Float[Array, "ndim"], Float[Array, "1"], Int[Array, "1"]
     ]:
@@ -61,8 +66,17 @@ class MALA(ProposalBase):
         """
 
         key1, key2 = jax.random.split(rng_key)
-
         dt = self.params["step_size"]
+        
+        # # Sample a random value for the step size from a normal distribution, centered at step size and with given sigma 
+        # # If no eps_sigma is given, it is put to zero, and the step size remains fixed
+        # eps = 0
+        # key2, eps_key = jax.random.split(key2)
+        # sigma = self.params["eps_sigma"]
+        # z = jax.random.normal(eps_key)
+        # eps = sigma * z
+        # dt += eps
+        
         dt2 = dt * dt
 
         _, (proposal, logprob, d_logprob) = jax.lax.scan(
@@ -82,7 +96,6 @@ class MALA(ProposalBase):
 
         position = jnp.where(do_accept, proposal[0], position)
         log_prob = jnp.where(do_accept, logprob[1], logprob[0])
-
         return position, log_prob, do_accept
 
     def update(
@@ -163,6 +176,9 @@ class MALA(ProposalBase):
 
         tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
+        print("Starting tuning of step size with:")
+        print(params["step_size"])
+
         counter = 0
         position, log_prob, do_accept = self.kernel_vmap(
             rng_key, initial_position, log_prob, data
@@ -173,6 +189,7 @@ class MALA(ProposalBase):
                 print(
                     "Maximal number of iterations reached. Existing tuning with current parameters."
                 )
+                print(params["step_size"])
                 break
             if acceptance_rate <= 0.3:
                 params["step_size"] *= 0.8
