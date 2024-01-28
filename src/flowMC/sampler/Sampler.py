@@ -260,21 +260,20 @@ class Sampler:
         # Finally, return all final chain's final positions
         last_step = self.summary[summary_mode]["chains"][:, -1]
         
-        # # TODO disable step size to check speed
-        # Adjust step size during training, if specified
-        if training and self.adaptive_step_size:
-            last_local_accs = jnp.mean(local_acceptance[:, 1::self.output_thinning])
-            gamma = compute_gamma(last_local_accs)
-            self.local_sampler.params["step_size"] *= gamma
+        # # Adjust step size during training, if specified
+        # if training and self.adaptive_step_size:
+        #     last_local_accs = jnp.mean(local_acceptance[:, 1::self.output_thinning])
+        #     gamma = compute_gamma(last_local_accs)
+        #     self.local_sampler.params["step_size"] *= gamma
             
-            self.summary[summary_mode]["gamma"] = jnp.append(
-                self.summary[summary_mode]["gamma"], jnp.array([gamma]), axis=0
-            )
+        #     self.summary[summary_mode]["gamma"] = jnp.append(
+        #         self.summary[summary_mode]["gamma"], jnp.array([gamma]), axis=0
+        #     )
             
-            # TODO for debugging
-            self.summary[summary_mode]["dt_test"] = jnp.append(
-                self.summary[summary_mode]["dt_test"], jnp.array([self.local_sampler.params["step_size"][0, 0]]), axis=0
-            )
+        #     # TODO for debugging
+        #     self.summary[summary_mode]["dt_test"] = jnp.append(
+        #         self.summary[summary_mode]["dt_test"], jnp.array([self.local_sampler.params["step_size"][0, 0]]), axis=0
+        #     )
             
         return last_step
 
@@ -611,7 +610,7 @@ class Sampler:
 @jax.jit
 def compute_gamma(acceptance_rate, target_rate=0.574, width=0.5):
     """Simple linear"""
-    gamma = width * (acceptance_rate - target_rate) + 1
+    # gamma = width * (acceptance_rate - target_rate) + 1
     """No change"""
-    # gamma = 1
+    gamma = 1
     return gamma
