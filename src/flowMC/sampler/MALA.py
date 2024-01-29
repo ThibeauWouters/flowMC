@@ -7,7 +7,6 @@ from flowMC.sampler.Proposal_Base import ProposalBase
 from functools import partialmethod
 from jaxtyping import PyTree, Array, Float, Int, PRNGKeyArray
 
-
 class MALA(ProposalBase):
     """
     Metropolis-adjusted Langevin algorithm sampler class builiding the mala_sampler method
@@ -25,21 +24,22 @@ class MALA(ProposalBase):
         self.params = params
         self.logpdf = logpdf
         self.use_autotune = use_autotune
+        self.gamma_T = 1
     
-        if "eps_sigma" not in self.params:
-            print("No eps_sigma was given, using fixed step size")
-            self.params["eps_sigma"] = 0
+        # if "eps_sigma" not in self.params:
+        #     print("No eps_sigma was given, using fixed step size")
+        #     self.params["eps_sigma"] = 0
 
     def body(self, carry, this_key):
         print("Compiling MALA body")
         this_position, dt, data = carry
-        jax.debug.print(str(dt[0, 0]))
+        dt = dt * self.gamma_T
         dt2 = dt * dt
         this_log_prob, this_d_log = jax.value_and_grad(self.logpdf)(this_position, data)
         proposal = this_position + jnp.dot(dt2, this_d_log) / 2
         proposal += jnp.dot(dt, jax.random.normal(this_key, shape=this_position.shape))
         return (proposal, dt, data), (proposal, this_log_prob, this_d_log)
-
+    
     def kernel(
         self,
         rng_key: PRNGKeyArray,
