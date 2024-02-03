@@ -107,14 +107,16 @@ class Sampler:
         self.local_sampler_tuning(initial_position, data)
         last_step = initial_position
         
+        gamma_T = 1
+        
         if self.n_loop_pretraining > 0:
-            last_step = self.pretraining_run(last_step, data)
+            last_step, gamma_T = self.pretraining_run(last_step, (data, gamma_T))
         
         if self.use_global == True and self.n_loop_training > 0:
-            last_step = self.global_sampler_tuning(last_step, data)
+            last_step, gamma_T = self.global_sampler_tuning(last_step, (data, gamma_T))
 
         if self.n_loop_production > 0:
-            last_step = self.production_run(last_step, data)
+            last_step, gamma_T = self.production_run(last_step, (data, gamma_T))
 
     def sampling_loop(
         self, initial_position: jnp.array, data: jnp.array, training=False, pretraining=False
@@ -130,6 +132,8 @@ class Sampler:
         Returns:
             chains (jnp.array): Samples from the posterior. Shape (n_chains, n_local_steps + n_global_steps, n_dim)
         """
+        
+        (data, gamma_T) = data
 
         production = False
         if training == True:
@@ -145,7 +149,7 @@ class Sampler:
             self.rng_keys_mcmc,
             self.n_local_steps,
             initial_position,
-            data,
+            (data, gamma_T),
             verbose=self.verbose,
         )
 
@@ -260,24 +264,17 @@ class Sampler:
         # Finally, return all final chain's final positions
         last_step = self.summary[summary_mode]["chains"][:, -1]
         
-        # Adjust step size during training, if specified    
+        # Adjust step size during training, if desired    
         if training and self.adaptive_step_size:
             last_local_accs = jnp.mean(local_acceptance[:, 1::self.output_thinning])
             gamma = compute_gamma(last_local_accs)
-            # self.local_sampler.params["step_size"] *= gamma
-            # self.local_sampler.params["gamma_T"] *= gamma
-            self.local_sampler.gamma_T *= gamma
+            gamma_T *= gamma
             
             self.summary[summary_mode]["gamma"] = jnp.append(
-                self.summary[summary_mode]["gamma"], jnp.array([self.local_sampler.gamma_T]), axis=0
+                self.summary[summary_mode]["gamma"], jnp.array([gamma_T]), axis=0
             )
             
-            # TODO for debugging
-            self.summary[summary_mode]["dt_test"] = jnp.append(
-                self.summary[summary_mode]["dt_test"], jnp.array([self.local_sampler.params["step_size"][0, 0]]), axis=0
-            )
-            
-        return last_step
+        return last_step, gamma_T
 
     def local_sampler_tuning(
         self, initial_position: jnp.array, data: jnp.array, max_iter: int = 100
@@ -301,7 +298,7 @@ class Sampler:
                 self.rng_keys_mcmc,
                 initial_position,
                 self.likelihood_vec(initial_position),
-                data,
+                (data, 1),
                 self.local_sampler.params,
                 max_iter,
             )
@@ -322,14 +319,15 @@ class Sampler:
             initial_position (Device Array): Initial position for the sampler, shape (n_chains, n_dim)
 
         """
+        (data, gamma_T) = data
         print("Training normalizing flow")
         last_step = initial_position
         for _ in tqdm(
             range(self.n_loop_training),
             desc="Tuning global sampler",
         ):
-            last_step = self.sampling_loop(last_step, data, training=True)
-        return last_step
+            last_step, gamma_T = self.sampling_loop(last_step, (data, gamma_T), training=True)
+        return last_step, gamma_T
 
     def pretraining_run(
         self, initial_position: jnp.ndarray, data: jnp.array
@@ -342,14 +340,15 @@ class Sampler:
             initial_position (Device Array): Initial position for the sampler, shape (n_chains, n_dim)
 
         """
+        (data, gamma_T) = data
         print("Starting pretraining run")
         last_step = initial_position
         for _ in tqdm(
             range(self.n_loop_pretraining),
             desc="Pretraining run",
         ):
-            last_step = self.sampling_loop(last_step, data, pretraining=True)
-        return last_step
+            last_step, gamma_T = self.sampling_loop(last_step, (data, gamma_T), pretraining=True)
+        return last_step, gamma_T
 
     def production_run(
         self, initial_position: jnp.ndarray, data: jnp.array
@@ -364,14 +363,15 @@ class Sampler:
             initial_position (Device Array): Initial position for the sampler, shape (n_chains, n_dim)
 
         """
+        (data, gamma_T) = data
         print("Starting Production run")
         last_step = initial_position
         for _ in tqdm(
             range(self.n_loop_production),
             desc="Production run",
         ):
-            last_step = self.sampling_loop(last_step, data)
-        return last_step
+            last_step, gamma_T = self.sampling_loop(last_step, (data, gamma_T))
+        return last_step, gamma_T
 
     def get_sampler_state(self, which: str="production") -> dict:
         """
@@ -537,7 +537,7 @@ class Sampler:
 
         eps=1e-3
         plt.figure(figsize=figsize)
-        if name == "gamma" or name == "dt_test":
+        if name == "gamma":
             mean= plotdata
         else:
             mean, _ = get_mean_and_std_chains(plotdata)
@@ -549,10 +549,6 @@ class Sampler:
         if "acc" in name:
             plt.ylim(0-eps, 1+eps)
             
-        if "local_acc" in name:
-            # TODO change this to only be used if we have MALA
-            plt.axhline(0.574, color="grey", linestyle="--")
-            
         if "gelman_rubin" in name:
             plt.axhline(1.1) # usual threshold for Gelman-Rubin R
         plt.savefig(f"{self.outdir_name}{name}_{which}.png", bbox_inches='tight')
@@ -561,7 +557,7 @@ class Sampler:
         
         # Choose the dataset
         data = self.get_sampler_state(which)
-        keys = ["local_accs", "global_accs", "log_prob", "gelman_rubin", "gamma", "dt_test"]
+        keys = ["local_accs", "global_accs", "log_prob", "gelman_rubin", "gamma"]
         if which == "training":
             keys = keys + ["loss_vals"]
         
@@ -608,11 +604,49 @@ class Sampler:
             print(f"Saving plot of chains to {name}")
         fig = corner.corner(samples, labels = labels, hist_kwargs={'density': True}, **default_corner_kwargs)
         fig.savefig(name, bbox_inches='tight')  
-        
+          
+          
+# TODO move this to some utils file
+            
 @jax.jit
-def compute_gamma(acceptance_rate, target_rate=0.574, width=0.5):
+def compute_gamma(acceptance_rate):
+    """
+    For MALA, the optimal acceptance rate is 0.574.
+    """
     """Simple linear"""
-    gamma = width * (acceptance_rate - target_rate) + 1
+    gamma = compute_gamma_linear(acceptance_rate)
     """No change"""
     # gamma = 1
+    """Three pieces"""
+    # gamma = compute_gamma_three_pieces(acceptance_rate)
+    """Three pieces, with linear increase"""
+    # gamma = compute_gamma_three_pieces_linear(acceptance_rate)
+    return gamma
+
+def compute_gamma_linear(acceptance_rate, target_rate=0.5, width=0.3):
+    gamma = width * (acceptance_rate - target_rate) + 1
+    return gamma
+
+def compute_gamma_three_pieces(acceptance_rate, 
+                               a_low: float = 0.7, 
+                               a_high: float = 0.9, 
+                               gamma_low: float = 0.8, 
+                               gamma_high: float = 1.2):
+    # Change if below a_L or above a_H and set equal to 1 if in between
+    gamma = jnp.where(acceptance_rate < a_low, gamma_low, 1)
+    gamma = jnp.where(acceptance_rate > a_high, gamma_high, gamma)
+    
+    return gamma
+
+def compute_gamma_three_pieces_linear(acceptance_rate, 
+                               a_low: float = 0.7, 
+                               a_high: float = 0.9, 
+                               gamma_low: float = 0.75, 
+                               gamma_high: float = 1.25):
+    # Change if below a_L or above a_H and set equal to 1 if in between
+    gamma_left = (1 - gamma_low) / (a_low - 0) * (acceptance_rate - a_low) + 1
+    gamma_right = (gamma_high - 1) / (1 - a_high) * (acceptance_rate - a_high) + 1
+    gamma = jnp.where(acceptance_rate < a_low, gamma_left, 1)
+    gamma = jnp.where(acceptance_rate > a_high, gamma_right, gamma)
+    
     return gamma

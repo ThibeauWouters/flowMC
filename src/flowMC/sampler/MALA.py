@@ -7,6 +7,7 @@ from flowMC.sampler.Proposal_Base import ProposalBase
 from functools import partialmethod
 from jaxtyping import PyTree, Array, Float, Int, PRNGKeyArray
 
+@jax.tree_util.register_pytree_node_class
 class MALA(ProposalBase):
     """
     Metropolis-adjusted Langevin algorithm sampler class builiding the mala_sampler method
@@ -24,7 +25,6 @@ class MALA(ProposalBase):
         self.params = params
         self.logpdf = logpdf
         self.use_autotune = use_autotune
-        self.gamma_T = 1
     
         # if "eps_sigma" not in self.params:
         #     print("No eps_sigma was given, using fixed step size")
@@ -32,20 +32,20 @@ class MALA(ProposalBase):
 
     def body(self, carry, this_key):
         print("Compiling MALA body")
-        this_position, dt, data = carry
-        dt = dt * self.gamma_T
+        this_position, dt, (data, gamma_T) = carry
+        dt = dt * gamma_T
         dt2 = dt * dt
         this_log_prob, this_d_log = jax.value_and_grad(self.logpdf)(this_position, data)
         proposal = this_position + jnp.dot(dt2, this_d_log) / 2
         proposal += jnp.dot(dt, jax.random.normal(this_key, shape=this_position.shape))
-        return (proposal, dt, data), (proposal, this_log_prob, this_d_log)
+        return (proposal, dt, (data, gamma_T)), (proposal, this_log_prob, this_d_log)
     
     def kernel(
         self,
         rng_key: PRNGKeyArray,
         position: Float[Array, "ndim"],
         log_prob: Float[Array, "1"],
-        data: PyTree
+        data: tuple
     ) -> tuple[
         Float[Array, "ndim"], Float[Array, "1"], Int[Array, "1"]
     ]:
@@ -64,6 +64,8 @@ class MALA(ProposalBase):
             log_prob (Float[Array, "1"]): new log-probability of the chain
             do_accept (Int[Array, "1"]): whether the new position is accepted
         """
+        
+        (data, gamma_T) = data
 
         key1, key2 = jax.random.split(rng_key)
         dt = self.params["step_size"]
@@ -77,10 +79,10 @@ class MALA(ProposalBase):
         # eps = sigma * z
         # dt += eps
         
-        dt2 = dt * dt
+        dt2 = dt * dt * (gamma_T ** 2)
 
         _, (proposal, logprob, d_logprob) = jax.lax.scan(
-            self.body, (position, dt, data), jnp.array([key1, key1])
+            self.body, (position, dt, (data, gamma_T)), jnp.array([key1, key1])
         )
 
         ratio = logprob[1] - logprob[0]
@@ -117,27 +119,28 @@ class MALA(ProposalBase):
         Returns:
             state (tuple): updated state array
         """
-        key, positions, log_p, acceptance, data = state
+        key, positions, log_p, acceptance, (data, gamma_T) = state
         _, key = jax.random.split(key)
         new_position, new_log_p, do_accept = self.kernel(
-            key, positions[i - 1], log_p[i - 1], data
+            key, positions[i - 1], log_p[i - 1], (data, gamma_T)
         )
         positions = positions.at[i].set(new_position)
         log_p = log_p.at[i].set(new_log_p)
         acceptance = acceptance.at[i].set(do_accept)
-        return (key, positions, log_p, acceptance, data)
+        return (key, positions, log_p, acceptance, (data, gamma_T))
 
     def sample(self,
         rng_key: PRNGKeyArray,
         n_steps: int,
         initial_position: Float[Array, "n_chains ndim"],
-        data: PyTree,
+        data: tuple,
         verbose: bool = False,
     ) -> tuple[
         Float[Array, "n_chains n_steps ndim"],
         Float[Array, "n_chains n_steps 1"],
         Int[Array, "n_chains n_steps 1"],
     ]:
+        (data, gamma_T) = data
         logp = self.logpdf_vmap(initial_position, data)
         n_chains = rng_key.shape[0]
         acceptance = jnp.zeros((n_chains, n_steps))
@@ -145,7 +148,7 @@ class MALA(ProposalBase):
             jnp.zeros((n_chains, n_steps) + initial_position.shape[-1:])
         ) + initial_position[:, None]
         all_logp = jnp.zeros((n_chains, n_steps)) + logp[:, None]
-        state = (rng_key, all_positions, all_logp, acceptance, data)
+        state = (rng_key, all_positions, all_logp, acceptance, (data, gamma_T))
         if verbose:
             iterator_loop = tqdm(
                 range(1, n_steps),
@@ -160,7 +163,11 @@ class MALA(ProposalBase):
 
 
     def mala_sampler_autotune(
-        self, rng_key, initial_position, log_prob, data, params, max_iter=30
+        self, rng_key, initial_position, log_prob, data, params, max_iter=30,
+        threshold_low = 0.4, 
+        threshold_high = 0.6, 
+        mul_low = 0.9,
+        mul_high = 1.1,
     ):
         """
         Tune the step size of the MALA kernel using the acceptance rate.
@@ -181,24 +188,34 @@ class MALA(ProposalBase):
 
         counter = 0
         position, log_prob, do_accept = self.kernel_vmap(
-            rng_key, initial_position, log_prob, data
+            rng_key, initial_position, log_prob, (data, 1)
         )
         acceptance_rate = jnp.mean(do_accept)
-        while (acceptance_rate <= 0.3) or (acceptance_rate >= 0.5):
+        while (acceptance_rate <= threshold_low) or (acceptance_rate >= threshold_high):
             if counter > max_iter:
                 print(
                     "Maximal number of iterations reached. Existing tuning with current parameters."
                 )
                 print(params["step_size"])
                 break
-            if acceptance_rate <= 0.3:
-                params["step_size"] *= 0.8
-            elif acceptance_rate >= 0.5:
-                params["step_size"] *= 1.25
+            if acceptance_rate <= threshold_low:
+                params["step_size"] *= mul_low
+            elif acceptance_rate >= threshold_high:
+                params["step_size"] *= mul_high
             counter += 1
             position, log_prob, do_accept = self.kernel_vmap(
-                rng_key, initial_position, log_prob, data
+                rng_key, initial_position, log_prob, (data, 1)
             )
             acceptance_rate = jnp.mean(do_accept)
         tqdm.__init__ = partialmethod(tqdm.__init__, disable=False)
         return params
+
+    def tree_flatten(self):
+        children = ()
+        
+        aux_data = {"params": self.params, "logpdf": self.logpdf, "use_autotune": self.use_autotune}
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children, **aux_data)
