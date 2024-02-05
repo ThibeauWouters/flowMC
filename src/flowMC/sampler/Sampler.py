@@ -104,7 +104,7 @@ class Sampler:
         # Note that auto-tune function needs to have the same number of steps
         # as the actual sampling loop to avoid recompilation.
 
-        self.local_sampler_tuning(initial_position, data)
+        # self.local_sampler_tuning(initial_position, data)
         last_step = initial_position
         
         gamma_T = 1
@@ -623,7 +623,7 @@ def compute_gamma(acceptance_rate):
     # gamma = compute_gamma_three_pieces_linear(acceptance_rate)
     return gamma
 
-def compute_gamma_linear(acceptance_rate, target_rate=0.5, width=0.3):
+def compute_gamma_linear(acceptance_rate, target_rate=0.75, width=0.3):
     gamma = width * (acceptance_rate - target_rate) + 1
     return gamma
 
