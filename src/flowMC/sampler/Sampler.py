@@ -373,7 +373,7 @@ class Sampler:
             last_step, gamma_T = self.sampling_loop(last_step, (data, gamma_T))
         return last_step, gamma_T
 
-    def get_sampler_state(self, which: str="production") -> dict:
+    def get_sampler_state(self, training = False) -> dict:
         """
         Get the sampler state. There are two sets of sampler outputs one can get,
         the training set and the production set.
@@ -386,10 +386,10 @@ class Sampler:
             training (bool): Whether to get the training set sampler state. Defaults to False.
 
         """
-        if which not in ["pretraining", "training", "production"]:
-            raise ValueError("Get sampler state got incorrect key")
+        if training: 
+            return self.summary["training"]
         else:
-            return self.summary[which]
+            return self.summary["production"]
 
     def sample_flow(self, n_samples: int) -> jnp.ndarray:
         """
@@ -613,10 +613,10 @@ def compute_gamma(acceptance_rate):
     """
     For MALA, the optimal acceptance rate is 0.574.
     """
-    """Simple linear"""
-    gamma = compute_gamma_linear(acceptance_rate)
     """No change"""
-    # gamma = 1
+    gamma = 1
+    """Simple linear"""
+    # gamma = compute_gamma_linear(acceptance_rate)
     """Three pieces"""
     # gamma = compute_gamma_three_pieces(acceptance_rate)
     """Three pieces, with linear increase"""
