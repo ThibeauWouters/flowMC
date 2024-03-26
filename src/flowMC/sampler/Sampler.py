@@ -10,6 +10,7 @@ from flowMC.nfmodel.base import NFModel
 from tqdm import tqdm
 import equinox as eqx
 import numpy as np
+import time
 
 default_hyperparameters = {
     "n_loop_training": 3,
@@ -153,10 +154,29 @@ class Sampler:
 
         self.local_sampler_tuning(initial_position, data)
         last_step = initial_position
+        # Run a single iteration, to get the runtime of the compilation
+        start_time = time.time()
+        _, _ = self.sampling_loop(last_step, data)
+        end_time = time.time()
+        runtime = end_time - start_time
+        with open(self.outdir + "runtime_compilation.txt", "w") as f:
+            f.write(str(runtime))
+        
+        start_time = time.time()
         if self.use_global == True:
             last_step = self.global_sampler_tuning(last_step, data)
+        end_time = time.time()
+        runtime = end_time - start_time
+        with open(self.outdir + "runtime_training.txt", "w") as f:
+            f.write(str(runtime))
 
+        start_time = time.time()
         last_step = self.production_run(last_step, data)
+        end_time = time.time()
+        runtime = end_time - start_time
+        with open(self.outdir + "runtime_production.txt", "w") as f:
+            f.write(str(runtime))
+            
 
     def sampling_loop(
         self, initial_position: jnp.array, data: jnp.array, training=False
