@@ -154,14 +154,8 @@ class Sampler:
 
         self.local_sampler_tuning(initial_position, data)
         last_step = initial_position
-        # Run a single iteration, to get the runtime of the compilation
-        start_time = time.time()
-        _, _ = self.sampling_loop(last_step, data)
-        end_time = time.time()
-        runtime = end_time - start_time
-        with open(self.outdir + "runtime_compilation.txt", "w") as f:
-            f.write(str(runtime))
         
+        # Training loop
         start_time = time.time()
         if self.use_global == True:
             last_step = self.global_sampler_tuning(last_step, data)
@@ -170,6 +164,7 @@ class Sampler:
         with open(self.outdir + "runtime_training.txt", "w") as f:
             f.write(str(runtime))
 
+        # Production loop
         start_time = time.time()
         last_step = self.production_run(last_step, data)
         end_time = time.time()
@@ -355,7 +350,7 @@ class Sampler:
         """
         print("Training normalizing flow")
         last_step = initial_position
-        for _ in tqdm(
+        for i in tqdm(
             range(self.n_loop_training),
             desc="Tuning global sampler",
         ):

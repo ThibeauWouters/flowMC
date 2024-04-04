@@ -44,7 +44,7 @@ class EvolutionaryOptimizer:
         self.history = []
         self.state = None
 
-    def optimize(self, objective, bound, n_loops = 100, seed = 9527, keep_history_step = 0):
+    def optimize(self, objective, bound, n_loops = 100, seed = 9527, keep_history_step = 0, early_stopping_patience: int = 50):
         """
         Optimize the objective function.
 
@@ -68,6 +68,8 @@ class EvolutionaryOptimizer:
         progress_bar = tqdm.tqdm(range(n_loops), "Generation: ") if self.verbose else range(n_loops)
         self.bound = bound
         self.state = self.strategy.initialize(key, self.es_params)
+        best_fitness = 1e10
+        patience = 0
         if keep_history_step > 0:
             self.history = []
             for i in progress_bar:
@@ -78,6 +80,16 @@ class EvolutionaryOptimizer:
         else:
             for i in progress_bar:
                 key, self.state, _ = self.optimize_step(subkey, self.state, objective, bound)
+                # Early stopping
+                if early_stopping_patience > 0:
+                    if self.state.best_fitness < best_fitness:
+                        best_fitness = self.state.best_fitness
+                        patience = 0
+                    else:
+                        patience += 1
+                        if patience == early_stopping_patience:
+                            print("Exiting early due to early stopping!")
+                            break
                 if self.verbose: progress_bar.set_description(f"Generation: {i}, Fitness: {self.state.best_fitness:.4f}")
 
     def optimize_step(self, key: jax.random.PRNGKey, state, objective: callable, bound):
