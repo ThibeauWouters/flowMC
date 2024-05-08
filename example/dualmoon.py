@@ -1,5 +1,13 @@
+# import psutil
+# p = psutil.Process()
+# p.cpu_affinity([0])
+# import os 
+# os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.20"
 import corner
 import jax
+print(jax.devices())
 import jax.numpy as jnp  # JAX NumPy
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,7 +50,7 @@ model = MaskedCouplingRQSpline(n_dim, 4, [32, 32], 8, subkey)
 rng_key, subkey = jax.random.split(rng_key)
 initial_position = jax.random.normal(subkey, shape=(n_chains, n_dim)) * 1
 
-MALA_Sampler = MALA(target_dualmoon, True, {"step_size": 0.1})
+MALA_Sampler = MALA(target_dualmoon, True, 0.1)
 
 print("Initializing sampler class")
 
@@ -80,7 +88,7 @@ print(
 )
 
 chains = np.array(chains)
-nf_samples = np.array(nf_samples[1])
+nf_samples = np.array(nf_samples)
 loss_vals = np.array(loss_vals)
 
 # Plot one chain to show the jump
@@ -123,3 +131,5 @@ figure = corner.corner(nf_samples, labels=["$x_1$", "$x_2$", "$x_3$", "$x_4$", "
 figure.set_size_inches(7, 7)
 figure.suptitle("Visualize NF samples")
 plt.show()
+
+nf_sampler.print_summary()
