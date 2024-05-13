@@ -156,21 +156,11 @@ class Sampler:
         last_step = initial_position
         
         # Training loop
-        start_time = time.time()
         if self.use_global == True:
             last_step = self.global_sampler_tuning(last_step, data)
-        end_time = time.time()
-        runtime = end_time - start_time
-        with open(self.outdir + "runtime_training.txt", "w") as f:
-            f.write(str(runtime))
 
         # Production loop
-        start_time = time.time()
         last_step = self.production_run(last_step, data)
-        end_time = time.time()
-        runtime = end_time - start_time
-        with open(self.outdir + "runtime_production.txt", "w") as f:
-            f.write(str(runtime))
             
 
     def sampling_loop(
