@@ -44,7 +44,7 @@ class EvolutionaryOptimizer:
         self.history = []
         self.state = None
 
-    def optimize(self, objective, bound, n_loops = 100, seed = 9527, keep_history_step = 0, early_stopping_patience: int = 50):
+    def optimize(self, objective, bound, n_loops = 100, seed = 9527, keep_history_step = 0, early_stopping_patience: int = 0):
         """
         Optimize the objective function.
 
