@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 import equinox as eqx
+from jax.scipy.special import logsumexp
 
 from flowMC.nfmodel.base import Bijection, Distribution
 
@@ -184,6 +185,82 @@ class Gaussian(Distribution):
 
     def sample(self, key: jax.random.PRNGKey, n_samples: int = 1) -> Array:
         return jax.random.multivariate_normal(key, self.mean, self.cov, (n_samples,))
+    
+    
+class MixtureOfGaussians(Distribution):
+    """
+    Mixture of Gaussians distribution.
+    
+    Args:
+        means (Array): Array of shape (n_modes, n_features) for the means of each Gaussian.
+        covariances (Array): Array of shape (n_modes, n_features, n_features) for the covariance matrices.
+        weights (Array): Array of shape (n_modes,) for the weights of each component. Must sum to 1.
+        learnable (bool): Whether parameters are learnable.
+
+    Attributes:
+        means (Array): Means of the Gaussians.
+        covariances (Array): Covariance matrices.
+        weights (Array): Weights of each component.
+    """
+    
+    n_gaussians: int
+    _means: Array
+    _covariances: Array
+    _weights: Array
+    learnable: bool = False
+    
+    @property
+    def means(self) -> Array:
+        if self.learnable:
+            return self._means
+        else:
+            return jax.lax.stop_gradient(self._means)
+
+    @property
+    def covariances(self) -> Array:
+        if self.learnable:
+            return self._covariances
+        else:
+            return jax.lax.stop_gradient(self._covariances)
+        
+    @property
+    def weights(self) -> Array:
+        if self.learnable:
+            return self._weights
+        else:
+            return jax.lax.stop_gradient(self._weights)
+
+    def __init__(self, means, covariances, weights = None, learnable=False):
+        assert jnp.shape(means)[0] == jnp.shape(covariances)[0], "Number of modes must match in means and covariances"
+        self.n_gaussians = jnp.shape(means)[0]
+        self._means = means
+        self._covariances = covariances
+        if weights is None:
+            weights = jnp.ones(len(means))
+        self._weights = weights / jnp.sum(weights)  # Ensure weights sum to 1
+        self.learnable = learnable
+
+    def log_prob(self, x):
+        # Compute log probabilities for each component
+        log_probs = jnp.array([
+            jax.scipy.stats.multivariate_normal.logpdf(x, mean, cov)
+            for mean, cov in zip(self.means, self.covariances)
+        ])
+        # Weight the probabilities and sum
+        return logsumexp(jnp.log(self.weights) + log_probs, axis=0)
+
+    def sample(self, key, n_samples=1):
+        # Sample component indices
+        keys = jax.random.split(key, n_samples)
+        component_indices = jax.random.choice(
+            key, len(self.weights), p=self.weights, shape=(n_samples,)
+        )
+        # Sample from selected components
+        samples = jnp.array([
+            jax.random.multivariate_normal(keys[i], self.means[idx], self.covariances[idx])
+            for i, idx in enumerate(component_indices)
+        ])
+        return samples
     
 class Composable(Distribution):
 

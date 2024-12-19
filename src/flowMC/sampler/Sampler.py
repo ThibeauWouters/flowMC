@@ -35,6 +35,7 @@ default_hyperparameters = {
     "verbose": False,
     "outdir": "./outdir/",
     "stopping_criterion_global_acc": 1.0,
+    "stopping_criterion_loss": -jnp.inf
 }
 
 class Sampler:
@@ -259,6 +260,9 @@ class Sampler:
                     loss_values.reshape(1, -1),
                     axis=0,
                 )
+                
+                loss_vals_mean = jnp.mean(loss_values)
+                auxiliary["loss_vals_mean"] = loss_vals_mean
 
             (
                 self.rng_keys_nf,
@@ -346,6 +350,9 @@ class Sampler:
             last_step, auxiliary = self.sampling_loop(last_step, data, training=True)
             if auxiliary["global_acc_mean"] > self.stopping_criterion_global_acc:
                 print("Early stopping: global acceptance target rate achieved")
+                break
+            if auxiliary["loss_vals_mean"] < self.stopping_criterion_loss:
+                print("Early stopping: loss target achieved")
                 break
         return last_step
 
