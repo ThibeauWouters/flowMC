@@ -18,13 +18,19 @@ def make_training_loop(optim: optax.GradientTransformation) -> Callable:
     Returns:
         train_flow: Function that trains the model.
     """
+    
+    @eqx.filter_value_and_grad
+    def loss_fn(model, x, log_posterior):
+        log_prob_nf = model.log_prob(x)
+        return -jnp.mean(log_prob_nf)
 
     @eqx.filter_value_and_grad
-    def loss_fn(model, x):
-        return -jnp.mean(model.log_prob(x))
+    def loss_fn_new(model, x, log_posterior):
+        log_prob_nf = model.log_prob(x)
+        return -jnp.mean(log_prob_nf * (log_posterior - log_prob_nf))
 
     @eqx.filter_jit
-    def train_step(model, x, opt_state):
+    def train_step(model, x, log_posterior, opt_state):
         """Train for a single step.
 
         Args:
@@ -37,12 +43,12 @@ def make_training_loop(optim: optax.GradientTransformation) -> Callable:
             model (eqx.Model): Updated model.
             opt_state (optax.OptState): Updated optimizer state.
         """
-        loss, grads = loss_fn(model, x)
+        loss, grads = loss_fn(model, x, log_posterior)
         updates, opt_state = optim.update(grads, opt_state)
         model = eqx.apply_updates(model, updates)
         return loss, model, opt_state
 
-    def train_epoch(rng, model, state, train_ds, batch_size):
+    def train_epoch(rng, model, state, train_ds, log_posterior_ds, batch_size):
         """Train for a single epoch."""
         train_ds_size = len(train_ds)
         steps_per_epoch = train_ds_size // batch_size
@@ -53,9 +59,10 @@ def make_training_loop(optim: optax.GradientTransformation) -> Callable:
             perms = perms.reshape((steps_per_epoch, batch_size))
             for perm in perms:
                 batch = train_ds[perm, ...]
-                value, model, state = train_step(model, batch, state)
+                batch_log_posterior = log_posterior_ds[perm, ...]
+                value, model, state = train_step(model, batch, batch_log_posterior, state)
         else:
-            value, model, state = train_step(model, train_ds, state)
+            value, model, state = train_step(model, train_ds, batch_log_posterior, state)
 
         return value, model, state
 
@@ -63,6 +70,7 @@ def make_training_loop(optim: optax.GradientTransformation) -> Callable:
         rng: PRNGKeyArray,
         model: eqx.Module,
         data: Array,
+        log_posterior: Array,
         state: optax.OptState,
         num_epochs: int,
         batch_size: int,
@@ -94,7 +102,7 @@ def make_training_loop(optim: optax.GradientTransformation) -> Callable:
             # Use a separate PRNG key to permute image data during shuffling
             rng, input_rng = jax.random.split(rng)
             # Run an optimization step over a training batch
-            value, model, state = train_epoch(input_rng, model, state, data, batch_size)
+            value, model, state = train_epoch(input_rng, model, state, data, log_posterior, batch_size)
             loss_values = loss_values.at[epoch].set(value)
             if loss_values[epoch] < best_loss:
                 best_model = model

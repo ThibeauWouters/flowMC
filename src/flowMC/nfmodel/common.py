@@ -143,6 +143,79 @@ class ScalarAffine(Bijection):
         log_det = -self.scale
         return y, log_det
 
+class Uniform(Distribution):
+
+    r"""Multivariate uniform distribution.
+    
+    Args:
+        mean (Array): Mean.
+        width (Array): Widths.
+        learnable (bool): Whether the mean and covariance matrix are learnable parameters.
+
+    Attributes:
+        mean (Array): Mean.
+        width (Array): Widths.
+    """
+
+    _mean: Array
+    _width: Array
+    n_dim: int
+    xmin: Array
+    xmax: Array
+    learnable: bool = False
+
+    @property
+    def mean(self) -> Array:
+        if self.learnable:
+            return self._mean
+        else:
+            return jax.lax.stop_gradient(self._mean)
+
+    @property
+    def width(self) -> Array:
+        if self.learnable:
+            return self._width
+        else:
+            return jax.lax.stop_gradient(self._width)
+
+    def __init__(self, mean: Array, width: Array, learnable: bool = False):
+        self._mean = mean
+        self._width = width
+        self.n_dim = jnp.shape(mean)[0]
+        self.learnable = learnable
+        
+        self.xmin = self.mean - self.width/2
+        self.xmax = self.mean + self.width/2
+
+    def log_prob(self, x: Array) -> Array:
+        # print(f"DEBUGGING: x for input = {x}")
+        # print(f"DEBUGGING: x for input shape = {jnp.shape(x)}")
+        
+        # output = jnp.where(
+        #     (x >= self.xmax) | (x <= self.xmin),
+        #     jnp.zeros_like(x) - jnp.inf,
+        #     jnp.zeros_like(x),
+        # )
+        
+        # print(f"DEBUGGING: log_prob output = {output}")
+        # print(f"DEBUGGING: log_prob output shape = {jnp.shape(output)}")
+        
+        
+        # Repeat mean and width to match size of x
+        mean = jnp.repeat(self.mean[None, :], jnp.shape(x)[0], axis=0)
+        width = jnp.repeat(self.width[None, :], jnp.shape(x)[0], axis=0)
+        
+        output = jax.scipy.stats.uniform.logpdf(x, loc=mean, scale=width)
+        
+        return output
+
+    def sample(self, key: jax.random.PRNGKey, n_samples: int = 1) -> Array:
+        samples = jax.random.uniform(key, shape=(n_samples, self.n_dim), minval=self.xmin, maxval=self.xmax)
+        
+        print(f"DEBUGGING: samples NF = {samples}")
+        print(f"DEBUGGING: samples NF shape = {jnp.shape(samples)}")
+        return samples
+
 class Gaussian(Distribution):
 
     r"""Multivariate Gaussian distribution.

@@ -60,7 +60,7 @@ class Sampler:
         "local_autotune": "(Callable) Auto-tune function for the local sampler",
         "train_thinning": "(int) Thinning parameter for the data used to train the normalizing flow",
         "output_thinning": "(int) Thinning parameter with which to save the data ",
-        "n_sample_max": "(int) Maximum number of samples fed to training the NF model",
+        "n_sample_max": "(int) Maximum number of samples to draw from the NF",
         "precompile": "(bool) Whether to precompile",
         "verbose": "(bool) Show steps of algorithm in detail",
         "outdir": "(str) Location to which to save plots, samples and hyperparameter settings. Note: should ideally start with `./` and also end with `/`",
@@ -217,16 +217,29 @@ class Sampler:
                 if self.keep_quantile > 0:
                     max_log_prob = jnp.max(log_prob_output, axis=1)
                     cut = jnp.quantile(max_log_prob, self.keep_quantile)
-                    cut_chains = positions[max_log_prob > cut]
+                    kept = max_log_prob > cut
+                    cut_chains = positions[kept]
+                    cut_log_prob = log_prob_output[kept]
                 else:
                     cut_chains = positions
+                    cut_log_prob = log_prob_output
                 chain_size = cut_chains.shape[0] * cut_chains.shape[1]
+                
+                total_steps = self.n_local_steps + self.n_global_steps
+                total_size = self.n_chains * total_steps
+                self.max_samples = min(self.max_samples, total_size)
+                
                 if chain_size > self.max_samples:
                     flat_chain = cut_chains[
                         :, -int(self.max_samples / self.n_chains) :
                     ].reshape(-1, self.n_dim)
+                    
+                    flat_log_prob = cut_log_prob[
+                        :, -int(self.max_samples / self.n_chains) :
+                    ].reshape(-1,)
                 else:
                     flat_chain = cut_chains.reshape(-1, self.n_dim)
+                    flat_log_prob = cut_log_prob.reshape(-1,)
 
                 if flat_chain.shape[0] < self.max_samples:
                     # This is to pad the training data to avoid recompilation.
@@ -236,7 +249,14 @@ class Sampler:
                         axis=0,
                     )
                     flat_chain = flat_chain[: self.max_samples]
-
+                    
+                    flat_log_prob = jnp.repeat(
+                        flat_log_prob,
+                        (self.max_samples // flat_log_prob.shape[0]) + 1,
+                        axis=0,
+                    )
+                    flat_log_prob = flat_log_prob[: self.max_samples]
+                    
                 self.variables["mean"] = jnp.mean(flat_chain, axis=0)
                 self.variables["cov"] = jnp.cov(flat_chain.T)
                 self.global_sampler.model = eqx.tree_at(
@@ -250,6 +270,7 @@ class Sampler:
                     self.rng_keys_nf,
                     self.nf_model,
                     flat_chain,
+                    flat_log_prob,
                     self.optim_state,
                     self.n_epochs,
                     self.batch_size,
@@ -347,6 +368,7 @@ class Sampler:
             range(self.n_loop_training),
             desc="Tuning global sampler",
         ):
+            data["iteration"] = i
             last_step, auxiliary = self.sampling_loop(last_step, data, training=True)
             if auxiliary["global_acc_mean"] > self.stopping_criterion_global_acc:
                 print("Early stopping: global acceptance target rate achieved")
@@ -375,6 +397,8 @@ class Sampler:
             range(self.n_loop_production),
             desc="Production run",
         ):
+            # TODO: this is not super clean, but it is one way of "disabling" the temperature
+            data["iteration"] = 99999
             last_step, _ = self.sampling_loop(last_step, data)
         return last_step
 

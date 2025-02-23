@@ -5,7 +5,7 @@ from jaxtyping import Array
 import equinox as eqx
 
 from flowMC.nfmodel.base import NFModel, Bijection, Distribution
-from flowMC.nfmodel.common import MaskedCouplingLayer, ScalarAffine, MLP, Gaussian, MixtureOfGaussians
+from flowMC.nfmodel.common import MaskedCouplingLayer, ScalarAffine, MLP, Gaussian, MixtureOfGaussians, Uniform
 from functools import partial
 
 
@@ -361,9 +361,16 @@ class MaskedCouplingRQSpline(NFModel):
         else:
             multimodality = int(kwargs.get("multimodality", 1))
             assert multimodality > 0, "Multimodality should be greater than 0"
-            if multimodality == 1:
+            
+            # FIXME: hardcoding this now
+            use_uniform = False
+            if multimodality == 1 and not use_uniform:
                 print("Setting up a single Gaussian distribution")
                 self.base_dist = Gaussian(jnp.zeros(n_features), jnp.eye(n_features), learnable=False)
+            elif use_uniform:
+                print(f"Setting up a uniform base distribution")
+                self.base_dist = Uniform(jnp.zeros(n_features), jnp.ones(n_features), learnable=False)
+            
             else:
                 print(f"Setting up a mixture of Gaussians with {multimodality} Gaussian distributions")
                 means = jnp.stack([jnp.zeros(n_features) + i for i in range(multimodality)])
