@@ -26,6 +26,11 @@ class GaussianRandomWalk(ProposalBase):
         jit: bool,
         step_size: Float,
     ):
+        # If step size is a matrix, convert to diagonal of that matrix
+        if len(step_size.shape) == 2:
+            print(f"Step size given was a matrix, converting to diagonal for GaussianRandomWalk")
+            step_size = jnp.diag(step_size)
+        
         super().__init__(logpdf, jit, step_size=step_size)
         self.step_size = step_size
         self.logpdf = logpdf
